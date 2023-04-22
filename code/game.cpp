@@ -14,6 +14,11 @@ korl_internal void _game_getInterfacePlatformApi(KorlPlatformApi korlApi)
 #include "korl-string.h"
 #include "korl-stringPool.h"
 #include "korl-logConsole.h"
+korl_global_const f32 SNES_SECONDS_PER_FRAME = 60.0988062658451f;// derived from: http://nerdlypleasures.blogspot.com/2017/01/classic-systems-true-framerate.html
+korl_global_const u8  SUPER_JUMP_FRAMES[] = {61, 31, 27, 23, 18, 15, 12, 9, 7, 7, 6, 5, 4, 3};// derived from a pidgezero_one youtube video: https://www.youtube.com/watch?v=uSCIK5-EU8A
+enum InputFlags
+    {INPUT_FLAG_JUMP
+};
 typedef struct Memory
 {
     Korl_Memory_AllocatorHandle allocatorHeap;
@@ -21,6 +26,11 @@ typedef struct Memory
     bool                        quit;
     Korl_StringPool             stringPool;// used by logConsole
     Korl_LogConsole             logConsole;
+    struct
+    {
+        u32 previous;
+        u32 current;
+    } input;
 } Memory;
 korl_global_variable Memory* memory;
 KORL_EXPORT KORL_GAME_INITIALIZE(korl_game_initialize)
@@ -47,18 +57,25 @@ KORL_EXPORT KORL_GAME_ON_KEYBOARD_EVENT(korl_game_onKeyboardEvent)
     if(isDown && !isRepeat)
         switch(keyCode)
         {
-        case KORL_KEY_ESCAPE:{
-            memory->quit = true;
-            break;}
-        case KORL_KEY_GRAVE:{
-            korl_logConsole_toggle(&memory->logConsole);
-            break;}
+        case KORL_KEY_SPACE:{memory->input.current |= 1 << INPUT_FLAG_JUMP; break;}
+        case KORL_KEY_ESCAPE:{memory->quit = true; break;}
+        case KORL_KEY_GRAVE:{korl_logConsole_toggle(&memory->logConsole); break;}
+        default: break;
+        }
+    else if(!isDown)
+        switch(keyCode)
+        {
+        case KORL_KEY_SPACE:{memory->input.current &= ~(1 << INPUT_FLAG_JUMP); break;}
         default: break;
         }
 }
 KORL_EXPORT KORL_GAME_UPDATE(korl_game_update)
 {
     korl_logConsole_update(&memory->logConsole, deltaSeconds, korl_log_getBuffer, {windowSizeX, windowSizeY}, memory->allocatorStack);
+    if(memory->input.current & (1 << INPUT_FLAG_JUMP))
+        korl_gfx_setClearColor(0, 69, 0);
+    else
+        korl_gfx_setClearColor(0, 0, 0);
     #if 0
     Korl_Gfx_Camera camera = korl_gfx_createCameraFov(90, 50, 1e16f, KORL_MATH_V3F32_ONE * 100, KORL_MATH_V3F32_ZERO);
     korl_gfx_useCamera(camera);
@@ -70,6 +87,7 @@ KORL_EXPORT KORL_GAME_UPDATE(korl_game_update)
     korl_gfx_batchSetScale(batchAxis, KORL_MATH_V3F32_ONE * 100);
     korl_gfx_batch(batchAxis, KORL_GFX_BATCH_FLAGS_NONE);
     #endif
+    memory->input.previous = memory->input.current;
     return !memory->quit;
 }
 #include "korl-math.c"
