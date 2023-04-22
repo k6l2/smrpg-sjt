@@ -1,0 +1,3 @@
+[submodule "submodules/korl"]
+	path = submodules/korl
+	url = https://github.com/k6l2/korl.git
