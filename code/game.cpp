@@ -14,10 +14,11 @@ korl_internal void _game_getInterfacePlatformApi(KorlPlatformApi korlApi)
 #include "korl-string.h"
 #include "korl-stringPool.h"
 #include "korl-logConsole.h"
-korl_global_const u8  MAX_SUPER_JUMPS        = 100;// this is the goal, after all
-korl_global_const f32 SNES_SECONDS_PER_FRAME = 1.f / 60.0988062658451f;// derived from: http://nerdlypleasures.blogspot.com/2017/01/classic-systems-true-framerate.html
-korl_global_const u8  SUPER_JUMP_FRAMES[]    = {61, 31, 27, 23, 18, 15, 12, 9, 7, 7, 6, 5, 4, 3};// derived from a pidgezero_one youtube video: https://www.youtube.com/watch?v=uSCIK5-EU8A
-korl_global_const f32 SECONDS_PER_JUMP[]     = {1.3333f, 0.75f};// obtained experimentally
+korl_global_const u8      MAX_SUPER_JUMPS        = 100;// this is the goal, after all
+korl_global_const f32     SNES_SECONDS_PER_FRAME = 1.f / 60.0988062658451f;// derived from: http://nerdlypleasures.blogspot.com/2017/01/classic-systems-true-framerate.html
+korl_global_const u8      SUPER_JUMP_FRAMES[]    = {61, 31, 27, 23, 18, 15, 12, 9, 7, 7, 6, 5, 4, 3};// derived from a pidgezero_one youtube video: https://www.youtube.com/watch?v=uSCIK5-EU8A
+korl_global_const f32     SECONDS_PER_JUMP[]     = {1.3333f, 0.75f};// obtained experimentally
+korl_global_const wchar_t DEFAULT_FONT[]         = L"submodules/korl/test-assets/source-sans/SourceSans3-Semibold.otf";
 enum InputFlags
     {INPUT_FLAG_JUMP
 };
@@ -38,8 +39,14 @@ typedef struct Memory
     u32  currentJump;
     f32  currentJumpSeconds;
     Korl_Math_V2f32 windowSize;
+    bool drawSuperJumpMinimumThreshold;
 } Memory;
 korl_global_variable Memory* memory;
+KORL_EXPORT KORL_FUNCTION_korl_command_callback(command_displayThreshold)
+{
+    memory->drawSuperJumpMinimumThreshold = !memory->drawSuperJumpMinimumThreshold;
+    korl_log(INFO, "drawSuperJumpMinimumThreshold = %hs", memory->drawSuperJumpMinimumThreshold ? "true" : "false");
+}
 KORL_EXPORT KORL_GAME_INITIALIZE(korl_game_initialize)
 {
     _game_getInterfacePlatformApi(korlApi);
@@ -51,7 +58,8 @@ KORL_EXPORT KORL_GAME_INITIALIZE(korl_game_initialize)
     memory->allocatorStack = korl_memory_allocator_create(KORL_MEMORY_ALLOCATOR_TYPE_LINEAR, L"game-stack", KORL_MEMORY_ALLOCATOR_FLAG_EMPTY_EVERY_FRAME, &heapCreateInfo);
     memory->stringPool     = korl_stringPool_create(allocatorHeap);
     memory->logConsole     = korl_logConsole_create(&memory->stringPool);
-    korl_gui_setFontAsset(L"submodules/korl/test-assets/source-sans/SourceSans3-Semibold.otf");// KORL-ISSUE-000-000-086: gfx: default font path doesn't work, since this subdirectly is unlikely in the game project
+    korl_gui_setFontAsset(DEFAULT_FONT);// KORL-ISSUE-000-000-086: gfx: default font path doesn't work, since this subdirectly is unlikely in the game project
+    korl_command_register(KORL_RAW_CONST_UTF8("display-threshold"), command_displayThreshold);
     return memory;
 }
 KORL_EXPORT KORL_GAME_ON_RELOAD(korl_game_onReload)
@@ -87,9 +95,9 @@ KORL_EXPORT KORL_GAME_UPDATE(korl_game_update)
     const f32 superJumpInputMaxSeconds = SNES_SECONDS_PER_FRAME * superJumpFrames;
     /**/
     if(     memory->input.current  & (1 << INPUT_FLAG_JUMP)
-       && !(memory->input.previous & (1 << INPUT_FLAG_JUMP)))
+       && !(memory->input.previous & (1 << INPUT_FLAG_JUMP)))// if the user pressed the JUMP input on _this_ frame
     {
-        if(memory->jumping)
+        if(memory->jumping)/* if we're jumping, we need to accept the next super jump input */
         {
             if(memory->jumpInputSeconds < 0)/* only allow a jump input if the user hasn't provided one for the current jump */
             {
@@ -114,12 +122,12 @@ KORL_EXPORT KORL_GAME_UPDATE(korl_game_update)
         /* jump simulation logic */
         if(memory->currentJumpSeconds >= jumpSeconds)
         {
-            korl_log(INFO, "(%f - %f) == %f", jumpSeconds, superJumpInputMaxSeconds, jumpSeconds - superJumpInputMaxSeconds);
+            // korl_log(INFO, "(%f - %f) == %f", jumpSeconds, superJumpInputMaxSeconds, jumpSeconds - superJumpInputMaxSeconds);
             /* if the user pressed the jump button at the right time, we can 
                 advance to the next jump of the super jump */
             if(   memory->jumpInputSeconds >= 0 // the user has actually pressed the jump input
                && (   memory->jumpInputSeconds >= jumpSeconds - superJumpInputMaxSeconds 
-                   || korl_math_isNearlyEqualEpsilon(memory->jumpInputSeconds, jumpSeconds - superJumpInputMaxSeconds, 1e-2f)) // user pressed the button within the frame window
+                   || korl_math_isNearlyEqualEpsilon(memory->jumpInputSeconds, jumpSeconds - superJumpInputMaxSeconds, 1e-3f)) // user pressed the button within the frame window
                && memory->currentJump < MAX_SUPER_JUMPS + 1/* don't count the first jump, like in SMRPG */)// limit the total # of super jumps to some maximum
             {
                 memory->currentJumpSeconds -= jumpSeconds;
@@ -142,7 +150,8 @@ KORL_EXPORT KORL_GAME_UPDATE(korl_game_update)
             korl_gfx_batchSetLine(batchLine, 0, Korl_Math_V2f32{-memory->windowSize.x / 2, jumpPositionY}.elements, Korl_Math_V2f32{memory->windowSize.x / 2, jumpPositionY}.elements, 2, KORL_COLOR4U8_WHITE);
             korl_gfx_batch(batchLine, KORL_GFX_BATCH_FLAG_DISABLE_DEPTH_TEST);
         }
-        {/* draw the visual indication of where the player needs to press the next jump input */
+        if(memory->drawSuperJumpMinimumThreshold)
+        {/* draw the visual indication of where the player needs to press the next jump input (below this line) */
             const f32 superJumpVisualRatio = KORL_MATH_CLAMP(superJumpInputMaxSeconds / (jumpSeconds / 2), 0, 1);// maps [0,1] => [bottom-of-jump, top-of-jump]
             const f32 y                    = -memory->windowSize.y / 2 + superJumpVisualRatio * memory->windowSize.y;
             Korl_Gfx_Batch*const batchLine = korl_gfx_createBatchLines(memory->allocatorStack, 1);
@@ -151,6 +160,15 @@ KORL_EXPORT KORL_GAME_UPDATE(korl_game_update)
         }
         /* advance timers */
         memory->currentJumpSeconds += deltaSeconds;
+    }
+    else
+    {
+        {/* draw instructions */
+            Korl_Gfx_Batch*const batch = korl_gfx_createBatchText(memory->allocatorStack, DEFAULT_FONT, L"Type [SPACE] key to begin super jump.", 24, KORL_COLOR4U8_WHITE, 0.f, KORL_COLOR4U8_TRANSPARENT);
+            korl_gfx_batchTextSetPositionAnchor(batch, KORL_MATH_V2F32_ONE * 0.5f);
+            korl_gfx_batchSetPosition2dV2f32(batch, KORL_MATH_V2F32_ZERO);
+            korl_gfx_batch(batch, KORL_GFX_BATCH_FLAG_DISABLE_DEPTH_TEST);
+        }
     }
     #if 0
     Korl_Gfx_Camera camera = korl_gfx_createCameraFov(90, 50, 1e16f, KORL_MATH_V3F32_ONE * 100, KORL_MATH_V3F32_ZERO);
