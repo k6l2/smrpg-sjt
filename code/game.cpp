@@ -14,7 +14,7 @@ korl_internal void _game_getInterfacePlatformApi(KorlPlatformApi korlApi)
 #include "korl-string.h"
 #include "korl-stringPool.h"
 #include "korl-logConsole.h"
-korl_global_const f32 SNES_SECONDS_PER_FRAME = 60.0988062658451f;// derived from: http://nerdlypleasures.blogspot.com/2017/01/classic-systems-true-framerate.html
+korl_global_const f32 SNES_SECONDS_PER_FRAME = 1.f / 60.0988062658451f;// derived from: http://nerdlypleasures.blogspot.com/2017/01/classic-systems-true-framerate.html
 korl_global_const u8  SUPER_JUMP_FRAMES[]    = {61, 31, 27, 23, 18, 15, 12, 9, 7, 7, 6, 5, 4, 3};// derived from a pidgezero_one youtube video: https://www.youtube.com/watch?v=uSCIK5-EU8A
 korl_global_const f32 SECONDS_PER_JUMP[]     = {1.3333f, 0.75f};// obtained experimentally
 enum InputFlags
@@ -84,11 +84,13 @@ KORL_EXPORT KORL_GAME_UPDATE(korl_game_update)
     {
         if(memory->jumping)
         {
+            memory->jumpInputSeconds = memory->currentJumpSeconds;
+            korl_log(INFO, "jumpInputSeconds = %f", memory->jumpInputSeconds);
         }
         else/* if we're not jumping, start a new jump */
         {
             memory->jumping            = true;
-            memory->jumpInputSeconds   = -1;
+            memory->jumpInputSeconds   = KORL_F32_MIN;
             memory->currentJump        = 0;
             memory->currentJumpSeconds = 0;
         }
@@ -96,20 +98,47 @@ KORL_EXPORT KORL_GAME_UPDATE(korl_game_update)
     korl_gfx_useCamera(korl_gfx_createCameraOrtho(1));
     if(memory->jumping)
     {
+        korl_log(VERBOSE, "currentJumpSeconds = %f", memory->currentJumpSeconds);
+        /* calculate the time duration the user is required to press the jump 
+            button during the current jump in order to sustain the super jump */
+        const u8  superJumpFrames          = SUPER_JUMP_FRAMES[KORL_MATH_CLAMP(memory->currentJump, 0, korl_arraySize(SUPER_JUMP_FRAMES) - 1)];
+        const f32 superJumpInputMaxSeconds = SNES_SECONDS_PER_FRAME * superJumpFrames;
         /* jump simulation logic */
         const f32 jumpSeconds = SECONDS_PER_JUMP[KORL_MATH_CLAMP(memory->currentJump, 0, korl_arraySize(SECONDS_PER_JUMP) - 1)];
         if(memory->currentJumpSeconds >= jumpSeconds)
         {
-            memory->jumping = false;
+            korl_log(INFO, "(%f - %f) == %f", jumpSeconds, superJumpInputMaxSeconds, jumpSeconds - superJumpInputMaxSeconds);
+            /* if the user pressed the jump button at the right time, we can 
+                advance to the next jump of the super jump */
+            if(   memory->jumpInputSeconds >= 0 
+               && (   memory->jumpInputSeconds >= jumpSeconds - superJumpInputMaxSeconds
+                   || korl_math_isNearlyEqualEpsilon(memory->jumpInputSeconds, jumpSeconds - superJumpInputMaxSeconds, 1e-2f)))
+            {
+                memory->currentJumpSeconds -= jumpSeconds;
+                memory->jumpInputSeconds    = KORL_F32_MIN;
+                memory->currentJump++;
+            }
+            else
+                memory->jumping = false;
         }
         /* draw the scene */
-        const f32 jumpAnimationRatio = memory->currentJumpSeconds < (jumpSeconds/2) 
-                                       ?         memory->currentJumpSeconds                    / (jumpSeconds/2)
-                                       : 1.f - ((memory->currentJumpSeconds - (jumpSeconds/2)) / (jumpSeconds/2));
-        const f32 jumpPositionY = -memory->windowSize.y/2 + jumpAnimationRatio * memory->windowSize.y;
-        Korl_Gfx_Batch*const batchLine = korl_gfx_createBatchLines(memory->allocatorStack, 1);
-        korl_gfx_batchSetLine(batchLine, 0, Korl_Math_V2f32{-memory->windowSize.x/2, jumpPositionY}.elements, Korl_Math_V2f32{memory->windowSize.x/2, jumpPositionY}.elements, 2, KORL_COLOR4U8_WHITE);
-        korl_gfx_batch(batchLine, KORL_GFX_BATCH_FLAG_DISABLE_DEPTH_TEST);
+        const f32 jumpAnimationRatio = memory->currentJumpSeconds < (jumpSeconds / 2) 
+                                       ?         memory->currentJumpSeconds                      / (jumpSeconds / 2)
+                                       : 1.f - ((memory->currentJumpSeconds - (jumpSeconds / 2)) / (jumpSeconds / 2));
+        const f32 jumpPositionY = -memory->windowSize.y / 2 + jumpAnimationRatio * memory->windowSize.y;
+        {/* draw the player */
+            Korl_Gfx_Batch*const batchLine = korl_gfx_createBatchLines(memory->allocatorStack, 1);
+            korl_gfx_batchSetLine(batchLine, 0, Korl_Math_V2f32{-memory->windowSize.x / 2, jumpPositionY}.elements, Korl_Math_V2f32{memory->windowSize.x / 2, jumpPositionY}.elements, 2, KORL_COLOR4U8_WHITE);
+            korl_gfx_batch(batchLine, KORL_GFX_BATCH_FLAG_DISABLE_DEPTH_TEST);
+        }
+        {/* draw the visual indication of where the player needs to press the next jump input */
+            const f32 superJumpVisualRatio = KORL_MATH_CLAMP(superJumpInputMaxSeconds / (jumpSeconds / 2), 0, 1);// maps [0,1] => [bottom-of-jump, top-of-jump]
+            const f32 y                    = -memory->windowSize.y / 2 + superJumpVisualRatio * memory->windowSize.y;
+            Korl_Gfx_Batch*const batchLine = korl_gfx_createBatchLines(memory->allocatorStack, 1);
+            korl_gfx_batchSetLine(batchLine, 0, Korl_Math_V2f32{-memory->windowSize.x / 2, y}.elements, Korl_Math_V2f32{memory->windowSize.x / 2, y}.elements, 2, KORL_COLOR4U8_GREEN);
+            korl_gfx_batch(batchLine, KORL_GFX_BATCH_FLAG_DISABLE_DEPTH_TEST);
+        }
+        /* advance timers */
         memory->currentJumpSeconds += deltaSeconds;
     }
     #if 0
