@@ -183,11 +183,10 @@ KORL_EXPORT KORL_GAME_UPDATE(korl_game_update)
                 memory->jumpInputSeconds = memory->currentJumpSeconds;
                 const f32 secondsFromSuperJumpThreshold = memory->currentJumpSeconds - (jumpSeconds - superJumpInputMaxSeconds);// negative => we were too early, positive => we were successful
                 // korl_log(INFO, "jumpInputSeconds = %f", memory->jumpInputSeconds);
-                // korl_log(INFO, "secondsFromSuperJumpThreshold = %f (%i SNES frames)", secondsFromSuperJumpThreshold, korl_math_round_f32_to_i32(secondsFromSuperJumpThreshold / SNES_SECONDS_PER_FRAME));
                 hudLog_add(korl_stringNewFormatUtf16(&memory->stringPool, L"secondsFromSuperJumpThreshold = %f (%i SNES frames)"
                                                     ,secondsFromSuperJumpThreshold
                                                     ,korl_math_round_f32_to_i32(secondsFromSuperJumpThreshold / SNES_SECONDS_PER_FRAME))
-                          ,!memory->hudLogJumpInputs);
+                          ,!memory->hudLogJumpInputs && secondsFromSuperJumpThreshold >= 0);
             }
         }
         else/* if we're not jumping, start a new jump */
@@ -220,7 +219,7 @@ KORL_EXPORT KORL_GAME_UPDATE(korl_game_update)
             else
             {
                 memory->jumping = false;
-                korl_log(INFO, "super jump complete; super jumps = %u", memory->currentJump > 0 ? memory->currentJump - 1 : 0);
+                hudLog_add(korl_stringNewFormatUtf16(&memory->stringPool, L"super jump complete; super jumps = %u", memory->currentJump > 0 ? memory->currentJump - 1 : 0), false);
             }
         }
         /* draw the scene */
