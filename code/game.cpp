@@ -162,6 +162,15 @@ KORL_EXPORT KORL_GAME_ON_KEYBOARD_EVENT(korl_game_onKeyboardEvent)
         default: break;
         }
 }
+korl_internal bool isJumpInputWithinThreshold(void)
+{
+    const f32 jumpSeconds               = SECONDS_PER_JUMP [KORL_MATH_CLAMP(memory->currentJump, 0, korl_arraySize(SECONDS_PER_JUMP)  - 1)];
+    const u8  superJumpFrames           = SUPER_JUMP_FRAMES[KORL_MATH_CLAMP(memory->currentJump, 0, korl_arraySize(SUPER_JUMP_FRAMES) - 1)];
+    const f32 superJumpInputMaxSeconds  = SNES_SECONDS_PER_FRAME * superJumpFrames;
+    return memory->jumpInputSeconds >= 0
+           && (   memory->jumpInputSeconds >= jumpSeconds - superJumpInputMaxSeconds 
+               || korl_math_isNearlyEqualEpsilon(memory->jumpInputSeconds, jumpSeconds - superJumpInputMaxSeconds, 1e-3f));
+}
 KORL_EXPORT KORL_GAME_UPDATE(korl_game_update)
 {
     memory->deltaSeconds = deltaSeconds;
@@ -169,9 +178,9 @@ KORL_EXPORT KORL_GAME_UPDATE(korl_game_update)
     korl_logConsole_update(&memory->logConsole, deltaSeconds, korl_log_getBuffer, {windowSizeX, windowSizeY}, memory->allocatorStack);
     /* calculate the time duration the user is required to press the jump 
         button during the current jump in order to sustain the super jump */
-    const f32 jumpSeconds              = SECONDS_PER_JUMP [KORL_MATH_CLAMP(memory->currentJump, 0, korl_arraySize(SECONDS_PER_JUMP)  - 1)];
-    const u8  superJumpFrames          = SUPER_JUMP_FRAMES[KORL_MATH_CLAMP(memory->currentJump, 0, korl_arraySize(SUPER_JUMP_FRAMES) - 1)];
-    const f32 superJumpInputMaxSeconds = SNES_SECONDS_PER_FRAME * superJumpFrames;
+    const f32 jumpSeconds               = SECONDS_PER_JUMP [KORL_MATH_CLAMP(memory->currentJump, 0, korl_arraySize(SECONDS_PER_JUMP)  - 1)];
+    const u8  superJumpFrames           = SUPER_JUMP_FRAMES[KORL_MATH_CLAMP(memory->currentJump, 0, korl_arraySize(SUPER_JUMP_FRAMES) - 1)];
+    const f32 superJumpInputMaxSeconds  = SNES_SECONDS_PER_FRAME * superJumpFrames;
     /**/
     if(     memory->input.current  & (1 << INPUT_FLAG_JUMP)
        && !(memory->input.previous & (1 << INPUT_FLAG_JUMP)))// if the user pressed the JUMP input on _this_ frame
@@ -186,7 +195,13 @@ KORL_EXPORT KORL_GAME_UPDATE(korl_game_update)
                 hudLog_add(korl_stringNewFormatUtf16(&memory->stringPool, L"secondsFromSuperJumpThreshold = %f (%i SNES frames)"
                                                     ,secondsFromSuperJumpThreshold
                                                     ,korl_math_round_f32_to_i32(secondsFromSuperJumpThreshold / SNES_SECONDS_PER_FRAME))
-                          ,!memory->hudLogJumpInputs && secondsFromSuperJumpThreshold >= 0);
+                          /*
+                                                        hudLogJumpInputs | !hudLogJumpInputs
+                                                       _____________________________________
+                             jumpInputWithinThreshold |  !onlyLog        |    onlyLog       
+                            !jumpInputWithinThreshold |  !onlyLog        |   !onlyLog       
+                          */
+                          ,!memory->hudLogJumpInputs && isJumpInputWithinThreshold());
             }
         }
         else/* if we're not jumping, start a new jump */
@@ -208,8 +223,7 @@ KORL_EXPORT KORL_GAME_UPDATE(korl_game_update)
             /* if the user pressed the jump button at the right time, we can 
                 advance to the next jump of the super jump */
             if(   memory->jumpInputSeconds >= 0 // the user has actually pressed the jump input
-               && (   memory->jumpInputSeconds >= jumpSeconds - superJumpInputMaxSeconds 
-                   || korl_math_isNearlyEqualEpsilon(memory->jumpInputSeconds, jumpSeconds - superJumpInputMaxSeconds, 1e-3f)) // user pressed the button within the frame window
+               && isJumpInputWithinThreshold() // user pressed the button within the frame window
                && memory->currentJump < MAX_SUPER_JUMPS + 1/* don't count the first jump, like in SMRPG */)// limit the total # of super jumps to some maximum
             {
                 memory->currentJumpSeconds -= jumpSeconds;
