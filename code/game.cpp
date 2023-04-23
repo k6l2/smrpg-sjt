@@ -14,6 +14,7 @@ korl_internal void _game_getInterfacePlatformApi(KorlPlatformApi korlApi)
 #include "korl-string.h"
 #include "korl-stringPool.h"
 #include "korl-logConsole.h"
+korl_global_const u8  MAX_SUPER_JUMPS        = 100;// this is the goal, after all
 korl_global_const f32 SNES_SECONDS_PER_FRAME = 1.f / 60.0988062658451f;// derived from: http://nerdlypleasures.blogspot.com/2017/01/classic-systems-true-framerate.html
 korl_global_const u8  SUPER_JUMP_FRAMES[]    = {61, 31, 27, 23, 18, 15, 12, 9, 7, 7, 6, 5, 4, 3};// derived from a pidgezero_one youtube video: https://www.youtube.com/watch?v=uSCIK5-EU8A
 korl_global_const f32 SECONDS_PER_JUMP[]     = {1.3333f, 0.75f};// obtained experimentally
@@ -79,13 +80,24 @@ KORL_EXPORT KORL_GAME_UPDATE(korl_game_update)
 {
     memory->windowSize = {KORL_C_CAST(f32, windowSizeX), KORL_C_CAST(f32, windowSizeY)};
     korl_logConsole_update(&memory->logConsole, deltaSeconds, korl_log_getBuffer, {windowSizeX, windowSizeY}, memory->allocatorStack);
+    /* calculate the time duration the user is required to press the jump 
+        button during the current jump in order to sustain the super jump */
+    const f32 jumpSeconds              = SECONDS_PER_JUMP [KORL_MATH_CLAMP(memory->currentJump, 0, korl_arraySize(SECONDS_PER_JUMP)  - 1)];
+    const u8  superJumpFrames          = SUPER_JUMP_FRAMES[KORL_MATH_CLAMP(memory->currentJump, 0, korl_arraySize(SUPER_JUMP_FRAMES) - 1)];
+    const f32 superJumpInputMaxSeconds = SNES_SECONDS_PER_FRAME * superJumpFrames;
+    /**/
     if(     memory->input.current  & (1 << INPUT_FLAG_JUMP)
        && !(memory->input.previous & (1 << INPUT_FLAG_JUMP)))
     {
         if(memory->jumping)
         {
-            memory->jumpInputSeconds = memory->currentJumpSeconds;
-            korl_log(INFO, "jumpInputSeconds = %f", memory->jumpInputSeconds);
+            if(memory->jumpInputSeconds < 0)/* only allow a jump input if the user hasn't provided one for the current jump */
+            {
+                memory->jumpInputSeconds = memory->currentJumpSeconds;
+                const f32 secondsFromSuperJumpThreshold = memory->currentJumpSeconds - (jumpSeconds - superJumpInputMaxSeconds);// negative => we were too early, positive => we were successful
+                // korl_log(INFO, "jumpInputSeconds = %f", memory->jumpInputSeconds);
+                korl_log(INFO, "secondsFromSuperJumpThreshold = %f (%i SNES frames)", secondsFromSuperJumpThreshold, korl_math_round_f32_to_i32(secondsFromSuperJumpThreshold / SNES_SECONDS_PER_FRAME));
+            }
         }
         else/* if we're not jumping, start a new jump */
         {
@@ -98,28 +110,27 @@ KORL_EXPORT KORL_GAME_UPDATE(korl_game_update)
     korl_gfx_useCamera(korl_gfx_createCameraOrtho(1));
     if(memory->jumping)
     {
-        korl_log(VERBOSE, "currentJumpSeconds = %f", memory->currentJumpSeconds);
-        /* calculate the time duration the user is required to press the jump 
-            button during the current jump in order to sustain the super jump */
-        const u8  superJumpFrames          = SUPER_JUMP_FRAMES[KORL_MATH_CLAMP(memory->currentJump, 0, korl_arraySize(SUPER_JUMP_FRAMES) - 1)];
-        const f32 superJumpInputMaxSeconds = SNES_SECONDS_PER_FRAME * superJumpFrames;
+        // korl_log(VERBOSE, "currentJumpSeconds = %f", memory->currentJumpSeconds);
         /* jump simulation logic */
-        const f32 jumpSeconds = SECONDS_PER_JUMP[KORL_MATH_CLAMP(memory->currentJump, 0, korl_arraySize(SECONDS_PER_JUMP) - 1)];
         if(memory->currentJumpSeconds >= jumpSeconds)
         {
             korl_log(INFO, "(%f - %f) == %f", jumpSeconds, superJumpInputMaxSeconds, jumpSeconds - superJumpInputMaxSeconds);
             /* if the user pressed the jump button at the right time, we can 
                 advance to the next jump of the super jump */
-            if(   memory->jumpInputSeconds >= 0 
-               && (   memory->jumpInputSeconds >= jumpSeconds - superJumpInputMaxSeconds
-                   || korl_math_isNearlyEqualEpsilon(memory->jumpInputSeconds, jumpSeconds - superJumpInputMaxSeconds, 1e-2f)))
+            if(   memory->jumpInputSeconds >= 0 // the user has actually pressed the jump input
+               && (   memory->jumpInputSeconds >= jumpSeconds - superJumpInputMaxSeconds 
+                   || korl_math_isNearlyEqualEpsilon(memory->jumpInputSeconds, jumpSeconds - superJumpInputMaxSeconds, 1e-2f)) // user pressed the button within the frame window
+               && memory->currentJump < MAX_SUPER_JUMPS + 1/* don't count the first jump, like in SMRPG */)// limit the total # of super jumps to some maximum
             {
                 memory->currentJumpSeconds -= jumpSeconds;
                 memory->jumpInputSeconds    = KORL_F32_MIN;
                 memory->currentJump++;
             }
             else
+            {
                 memory->jumping = false;
+                korl_log(INFO, "super jump complete; super jumps = %u", memory->currentJump > 0 ? memory->currentJump - 1 : 0);
+            }
         }
         /* draw the scene */
         const f32 jumpAnimationRatio = memory->currentJumpSeconds < (jumpSeconds / 2) 
